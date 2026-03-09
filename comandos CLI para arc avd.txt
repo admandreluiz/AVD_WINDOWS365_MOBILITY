@@ -1,0 +1,88 @@
+# 🚀 Azure Virtual Desktop (AVD) com Azure Arc – Guia de Configuração
+
+Este guia reúne todos os comandos necessários para configurar um ambiente **AVD integrado ao Azure Arc**.
+
+---
+
+## 📌 Pré-requisitos
+- **Azure CLI 2.55+**
+- Extensões necessárias: `desktopvirtualization` e `connectedmachine`
+
+```bash
+az extension add --name desktopvirtualization
+az extension add --name connectedmachine
+az login
+az account set --subscription "<SUBSCRIPTION_ID>"
+
+az group create --name rg-avd-andre --location brazilsouth
+
+# (Opcional) Criar VNET/Subnet se hospedar VMs no Azure
+az network vnet create \
+  --resource-group rg-avd-andre \
+  --name vnet-avd \
+  --address-prefix 10.10.0.0/16 \
+  --subnet-name sn-avd \
+  --subnet-prefix 10.10.1.0/24
+
+az desktopvirtualization workspace create \
+  --name ws-andre \
+  --location brazilsouth \
+  --resource-group rg-avd-andre \
+  --friendly-name "Workspace andre.org"
+
+az desktopvirtualization hostpool create \
+  --resource-group rg-avd-andre \
+  --name hp-onprem-andre \
+  --location brazilsouth \
+  --host-pool-type Pooled \
+  --friendly-name "HP OnPrem (Arc)" \
+  --load-balancer-type BreadthFirst \
+  --preferred-app-group-type Desktop
+
+# Descobrir o resourceId do host pool
+hpId=$(az desktopvirtualization hostpool show \
+  --resource-group rg-avd-andre \
+  --name hp-onprem-andre \
+  --query id -o tsv)
+
+# Criar o DAG (Desktop Application Group)
+az desktopvirtualization applicationgroup create \
+  --name dag-onprem-andre \
+  --resource-group rg-avd-andre \
+  --location brazilsouth \
+  --host-pool-arm-path $hpId \
+  --application-group-type Desktop
+
+appGroupId=$(az desktopvirtualization applicationgroup show \
+  --resource-group rg-avd-andre \
+  --name dag-onprem-andre \
+  --query id -o tsv)
+
+az desktopvirtualization workspace update \
+  --name ws-andre \
+  --resource-group rg-avd-andre \
+  --application-group-references $appGroupId
+
+appGroupPath=$(az desktopvirtualization applicationgroup show \
+  --resource-group rg-avd-andre \
+  --name dag-onprem-andre \
+  --query id -o tsv)
+
+userGroupId=$(az ad group show \
+  --group "Grp-AVD-Usuarios" \
+  --query id -o tsv)
+
+az role assignment create \
+  --assignee $userGroupId \
+  --scope $appGroupPath \
+  --role "Desktop Virtualization User"
+  
+az desktopvirtualization hostpool retrieve-registration-token \
+  --resource-group rg-avd-andre \
+  --name hp-onprem-andre
+
+azcmagent connect \
+  --subscription-id "<SUBSCRIPTION_ID>" \
+  --resource-group rg-avd-andre \
+  --location brazilsouth \
+  --use-azcli
